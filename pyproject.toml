@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roboreka"
+version = "0.1.0"
+description = "Lightweight VoIP (SIP/RTP + DTMF) server for NanoPi NEO v1.4 that turns a robot arm over I2C (PCA9685)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    'tomli>=2.0; python_version < "3.11"',
+]
+
+[project.optional-dependencies]
+hardware = ["smbus2>=0.4.3"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+roboreka-server = "roboreka.cli:main_server"
+roboreka-call = "roboreka.cli:main_call"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

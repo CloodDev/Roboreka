@@ -1,0 +1,68 @@
+# Roboreka configuration for NanoPi NEO v1.4 + PCA9685 I2C servo controller
+
+[sip]
+host = "0.0.0.0"
+port = 5060
+# Leave empty to auto-detect the board's LAN IP for SDP/Contact headers
+advertise_ip = ""
+rtp_port_start = 10000
+rtp_port_end = 10100
+max_concurrent_calls = 1
+call_timeout_s = 120
+
+[i2c]
+# NanoPi NEO v1.4 GPIO1 header pins 3 (SDA) & 5 (SCL) map to I2C0 (/dev/i2c-0)
+bus = 0
+address = 0x40
+pwm_frequency_hz = 50.0
+# Set mock = true on non-Linux dev machines without I2C hardware
+mock = false
+
+[arm]
+home_on_start = true
+speed_deg_per_sec = 90.0
+release_on_shutdown = true
+
+[[arm.joints]]
+name = "base"
+channel = 0
+min_angle = 0.0
+max_angle = 180.0
+home_angle = 90.0
+min_pulse_us = 500.0
+max_pulse_us = 2500.0
+step_deg = 15.0
+inverted = false
+
+[[arm.joints]]
+name = "shoulder"
+channel = 1
+min_angle = 15.0
+max_angle = 165.0
+home_angle = 90.0
+min_pulse_us = 500.0
+max_pulse_us = 2500.0
+step_deg = 15.0
+inverted = false
+
+[[arm.joints]]
+name = "elbow"
+channel = 2
+min_angle = 15.0
+max_angle = 165.0
+home_angle = 90.0
+min_pulse_us = 500.0
+max_pulse_us = 2500.0
+step_deg = 15.0
+inverted = false
+
+[[arm.joints]]
+name = "gripper"
+channel = 3
+min_angle = 10.0
+max_angle = 120.0
+home_angle = 60.0
+min_pulse_us = 500.0
+max_pulse_us = 2500.0
+step_deg = 15.0
+inverted = false
