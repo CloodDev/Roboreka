@@ -7,7 +7,8 @@ import uuid
 
 import pytest
 
-from roboreka.config import AppConfig, ArmConfig, I2CConfig, SIPConfig
+from roboreka.config import AppConfig, ArmConfig, CallActionPose, I2CConfig, SIPConfig
+from roboreka.i2c.pca9685 import PCA9685
 from roboreka.voip.rtp import RTPSession
 from roboreka.voip.sdp import build_sdp_answer, parse_sdp
 from roboreka.voip.server import RoborekaServer
@@ -216,5 +217,44 @@ async def test_e2e_voip_turns_arm_via_rfc4733_inband_info_and_busy() -> None:
         assert server.pca9685.read_channel_pwm(0) == (0, 410)
 
         await _hangup(tx3, proto3, rtp3, sip_port, csip3, cid3, ftag3, to3, cseq=3)
+    finally:
+        await server.stop()
+
+
+async def test_call_action_sequence_returns_all_joints_home() -> None:
+    cfg = AppConfig(
+        sip=SIPConfig(host="127.0.0.1", port=0, rtp_port_start=0, rtp_port_end=0),
+        i2c=I2CConfig(mock=True),
+        arm=ArmConfig(
+            home_on_start=True,
+            speed_deg_per_sec=1000.0,
+            call_sequence=[CallActionPose(angles={"base": 120.0}, hold_s=0.02)],
+        ),
+    )
+    server = RoborekaServer(cfg)
+    sip_port = await server.start()
+
+    try:
+        tx, proto, rtp, call_id, from_tag, to_header, caller_port = await _dial(sip_port)
+        deadline = asyncio.get_running_loop().time() + 3.0
+        while call_id not in server._call_action_tasks:
+            if asyncio.get_running_loop().time() >= deadline:
+                pytest.fail("automatic call action did not start")
+            await asyncio.sleep(0.01)
+        while call_id in server._call_action_tasks:
+            if asyncio.get_running_loop().time() >= deadline:
+                pytest.fail("automatic call action did not finish")
+            await asyncio.sleep(0.01)
+
+        assert server.arm.get_state()["base"] == pytest.approx(90.0)
+        assert server.arm.get_state()["shoulder"] == pytest.approx(90.0)
+        assert server.pca9685.read_channel_pwm(0) == (0, 307)
+        assert any(
+            operation == "write_block"
+            and register == PCA9685.LED0_ON_L
+            and data[2:] == [0x77, 0x01]
+            for operation, _, register, data in server.bus.history
+        )
+        await _hangup(tx, proto, rtp, sip_port, caller_port, call_id, from_tag, to_header)
     finally:
         await server.stop()

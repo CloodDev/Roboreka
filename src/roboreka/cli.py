@@ -22,6 +22,17 @@ from roboreka.voip.sip import (
 )
 from roboreka.voip.server import RoborekaServer
 from roboreka.voip.tones import dtmf_tone_frames
+from roboreka.web import ArmControlAPI
+
+
+def _parse_port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("port must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1 and 65535")
+    return port
 
 
 def _build_server_parser() -> argparse.ArgumentParser:
@@ -61,11 +72,23 @@ def _build_server_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging verbosity (default: INFO)",
     )
+    parser.add_argument("--api-port", type=_parse_port, default=8081, help="Local arm API port (default: 8081)")
+    parser.add_argument(
+        "--no-api",
+        action="store_true",
+        help="Disable the local arm API (the separate web app will not be able to control the arm)",
+    )
     return parser
 
 
-async def _run_server(config: AppConfig) -> None:
+async def _run_server(
+    config: AppConfig,
+    config_path: str | None = None,
+    api_enabled: bool = True,
+    api_port: int = 8081,
+) -> None:
     server = RoborekaServer(config)
+    arm_api = ArmControlAPI(server, config_path, port=api_port) if api_enabled else None
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
@@ -75,11 +98,17 @@ async def _run_server(config: AppConfig) -> None:
         except (NotImplementedError, AttributeError, RuntimeError):
             pass
 
-    await server.start()
     try:
+        await server.start()
+        if arm_api is not None:
+            arm_api.start()
         await stop_event.wait()
     finally:
-        await server.stop()
+        try:
+            if arm_api is not None:
+                arm_api.stop()
+        finally:
+            await server.stop()
 
 
 def main_server(argv: Sequence[str] | None = None) -> int:
@@ -107,7 +136,14 @@ def main_server(argv: Sequence[str] | None = None) -> int:
         config.arm.home_on_start = False
 
     try:
-        asyncio.run(_run_server(config))
+        asyncio.run(
+            _run_server(
+                config,
+                config_path=args.config,
+                api_enabled=not args.no_api,
+                api_port=args.api_port,
+            )
+        )
     except KeyboardInterrupt:
         pass
     return 0

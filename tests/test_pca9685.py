@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from roboreka.arm.controller import RobotArm
 from roboreka.config import I2CConfig, load_config
 from roboreka.i2c.bus import MockI2CBus
 from roboreka.i2c.pca9685 import PCA9685
@@ -21,6 +22,69 @@ def test_nanopi_neo_i2c0_defaults() -> None:
     assert loaded.i2c.bus == 0
     assert loaded.i2c.address == 0x40
     assert loaded.i2c.pwm_frequency_hz == 50.0
+
+
+def test_configured_joint_channel_drives_selected_pca9685_output(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[arm]\nhome_on_start = false\n'
+        '[[arm.joints]]\nname = "base"\nchannel = 7\n',
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    bus = MockI2CBus()
+    driver = PCA9685(bus, sleep_fn=lambda _: None)
+    arm = RobotArm(driver, config.arm)
+    arm.set_angle_immediate("base", 90.0)
+
+    assert driver.read_channel_pwm(7) == (0, 307)
+    assert (0x40, PCA9685.LED0_ON_L + 4 * 7) in bus.registers
+    assert (0x40, PCA9685.LED0_ON_L) not in bus.registers
+
+
+@pytest.mark.parametrize(
+    ("channels", "error"),
+    [
+        ([16], "between 0 and 15"),
+        ([3, 3], "Duplicate PCA9685 channel"),
+    ],
+)
+def test_config_rejects_invalid_joint_channels(
+    tmp_path: Path, channels: list[int], error: str
+) -> None:
+    config_path = tmp_path / "config.toml"
+    joints = "".join(
+        f'[[arm.joints]]\nname = "joint{index}"\nchannel = {channel}\n'
+        for index, channel in enumerate(channels)
+    )
+    config_path.write_text(joints, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=error):
+        load_config(config_path)
+
+
+def test_config_loads_call_action_poses_and_validates_joint_limits(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[arm]\n'
+        '[[arm.call_sequence]]\n'
+        'angles = { base = 105.0 }\n'
+        'hold_s = 0.5\n',
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    assert len(config.arm.call_sequence) == 1
+    assert config.arm.call_sequence[0].angles == {"base": 105.0}
+    assert config.arm.call_sequence[0].hold_s == 0.5
+
+    config_path.write_text(
+        '[arm]\n'
+        '[[arm.call_sequence]]\n'
+        'angles = { base = 181.0 }\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="between 0.0 and 180.0"):
+        load_config(config_path)
 
 
 def test_pca9685_init_sequence_and_prescale() -> None:

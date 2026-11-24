@@ -1,5 +1,5 @@
 [Unit]
-Description=Roboreka VoIP-to-I2C Robot Arm Server (NanoPi NEO v1.4)
+Description=Roboreka SIP and Robot Arm Controller (NanoPi NEO v1.4)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,7 +8,7 @@ Type=simple
 User=roboreka
 SupplementaryGroups=i2c
 WorkingDirectory=/opt/roboreka
-ExecStart=/opt/roboreka/.venv/bin/roboreka-server --config /etc/roboreka/config.toml
+ExecStart=/opt/roboreka/.venv/bin/roboreka-server --config /etc/roboreka/config.toml --api-port 8081
 Restart=on-failure
 RestartSec=3
 

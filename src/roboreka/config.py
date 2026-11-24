@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,14 @@ def default_joints() -> list[JointConfig]:
 
 
 @dataclass
+class CallActionPose:
+    """A target pose and hold duration for the automatic incoming-call sequence."""
+
+    angles: dict[str, float] = field(default_factory=dict)
+    hold_s: float = 0.0
+
+
+@dataclass
 class ArmConfig:
     """Robot arm motion and safety behavior."""
 
@@ -104,6 +113,7 @@ class ArmConfig:
     speed_deg_per_sec: float = 90.0
     release_on_shutdown: bool = True
     joints: list[JointConfig] = field(default_factory=default_joints)
+    call_sequence: list[CallActionPose] = field(default_factory=list)
 
 
 @dataclass
@@ -133,6 +143,69 @@ def _parse_joint(raw: dict[str, Any]) -> JointConfig:
         step_deg=float(raw.get("step_deg", 15.0)),
         inverted=bool(raw.get("inverted", False)),
     )
+
+
+def _validate_joint_channels(joints: list[JointConfig]) -> None:
+    seen_channels: set[int] = set()
+    for joint in joints:
+        if not 0 <= joint.channel <= 15:
+            raise ValueError(
+                f"Joint {joint.name!r} channel must be between 0 and 15, got {joint.channel}"
+            )
+        if joint.channel in seen_channels:
+            raise ValueError(f"Duplicate PCA9685 channel: {joint.channel}")
+        seen_channels.add(joint.channel)
+
+
+def _parse_call_sequence(
+    raw_sequence: Any,
+    joints: list[JointConfig],
+) -> list[CallActionPose]:
+    if not isinstance(raw_sequence, list):
+        raise ValueError("arm.call_sequence must be an array of tables")
+
+    joint_by_name = {joint.name: joint for joint in joints}
+    sequence: list[CallActionPose] = []
+    for index, raw_pose in enumerate(raw_sequence):
+        if not isinstance(raw_pose, dict):
+            raise ValueError(f"arm.call_sequence entry {index + 1} must be a table")
+
+        raw_angles = raw_pose.get("angles", {})
+        if not isinstance(raw_angles, dict):
+            raise ValueError(f"arm.call_sequence entry {index + 1} angles must be a table")
+
+        angles: dict[str, float] = {}
+        for name, raw_angle in raw_angles.items():
+            if name not in joint_by_name:
+                raise ValueError(
+                    f"arm.call_sequence entry {index + 1} references unknown joint {name!r}"
+                )
+            if isinstance(raw_angle, bool) or not isinstance(raw_angle, (int, float)):
+                raise ValueError(
+                    f"arm.call_sequence entry {index + 1} angle for {name!r} must be numeric"
+                )
+            angle = float(raw_angle)
+            joint = joint_by_name[name]
+            if not math.isfinite(angle) or not joint.min_angle <= angle <= joint.max_angle:
+                raise ValueError(
+                    f"arm.call_sequence entry {index + 1} angle for {name!r} "
+                    f"must be between {joint.min_angle} and {joint.max_angle}"
+                )
+            angles[name] = angle
+
+        raw_hold_s = raw_pose.get("hold_s", 0.0)
+        if isinstance(raw_hold_s, bool) or not isinstance(raw_hold_s, (int, float)):
+            raise ValueError(
+                f"arm.call_sequence entry {index + 1} hold_s must be numeric"
+            )
+        hold_s = float(raw_hold_s)
+        if not math.isfinite(hold_s) or hold_s < 0:
+            raise ValueError(
+                f"arm.call_sequence entry {index + 1} hold_s must be finite and non-negative"
+            )
+        sequence.append(CallActionPose(angles=angles, hold_s=hold_s))
+
+    return sequence
 
 
 def load_config(path: str | Path | None = None) -> AppConfig:
@@ -166,11 +239,14 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     arm_raw = data.get("arm", {})
     joints_raw = arm_raw.get("joints")
     joints = [_parse_joint(j) for j in joints_raw] if joints_raw is not None else default_joints()
+    _validate_joint_channels(joints)
+    call_sequence = _parse_call_sequence(arm_raw.get("call_sequence", []), joints)
     arm = ArmConfig(
         home_on_start=bool(arm_raw.get("home_on_start", True)),
         speed_deg_per_sec=float(arm_raw.get("speed_deg_per_sec", 90.0)),
         release_on_shutdown=bool(arm_raw.get("release_on_shutdown", True)),
         joints=joints,
+        call_sequence=call_sequence,
     )
 
     return AppConfig(sip=sip, i2c=i2c, arm=arm)

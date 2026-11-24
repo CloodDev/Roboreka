@@ -19,6 +19,7 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 [project.scripts]
 roboreka-server = "roboreka.cli:main_server"
 roboreka-call = "roboreka.cli:main_call"
+roboreka-web = "roboreka.web_ui:main_web"
 
 [tool.setuptools.packages.find]
 where = ["src"]

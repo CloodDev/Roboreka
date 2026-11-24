@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Callable
 
@@ -67,10 +68,13 @@ class RoborekaServer:
             on_call_ended=self._on_call_ended,
             on_dtmf=self.handle_dtmf,
         )
+        self._call_action_tasks: dict[str, asyncio.Task[None]] = {}
+        self.loop: asyncio.AbstractEventLoop | None = None
         self._started = False
 
     async def start(self) -> int:
         """Initialize arm home position (if enabled) and start the SIP UDP server."""
+        self.loop = asyncio.get_running_loop()
         if self.config.arm.home_on_start:
             self.arm.home_all_immediate()
             logger.info("Homed robot arm joints: %s", self.arm.get_state())
@@ -94,24 +98,91 @@ class RoborekaServer:
             return
         self._started = False
         await self.sip_server.stop()
+        if self._call_action_tasks:
+            await asyncio.gather(*self._call_action_tasks.values())
         if self.config.arm.release_on_shutdown:
             self.arm.release()
         else:
             self.arm.stop()
         self.bus.close()
+        self.loop = None
         logger.info("Roboreka server stopped cleanly")
+
+    @property
+    def call_action_running(self) -> bool:
+        return any(not task.done() for task in self._call_action_tasks.values())
+
+    @property
+    def event_loop(self) -> asyncio.AbstractEventLoop:
+        if self.loop is None or self.loop.is_closed():
+            raise RuntimeError("Roboreka arm controller is not running")
+        return self.loop
+
+    async def stop_arm(self, release: bool = False) -> None:
+        """Stop automatic call actions and arm movement, optionally releasing servos."""
+        tasks = list(self._call_action_tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if release:
+            self.arm.release()
+        else:
+            self.arm.stop()
 
     def _on_call_started(self, call: SIPCall) -> None:
         logger.info("Call started: id=%s from=%s", call.call_id, call.from_header)
         call.rtp_session.enqueue_audio(welcome_chime())
+        if self.config.arm.call_sequence:
+            task = asyncio.create_task(self._run_call_sequence(call))
+            self._call_action_tasks[call.call_id] = task
+            task.add_done_callback(lambda completed: self._on_call_sequence_done(call.call_id, completed))
 
     def _on_call_ended(self, call: SIPCall) -> None:
         logger.info("Call ended: id=%s", call.call_id)
+
+    async def _run_call_sequence(self, call: SIPCall) -> None:
+        for index, pose in enumerate(self.config.arm.call_sequence, start=1):
+            logger.info(
+                "Call action pose %d/%d for call %s: %s",
+                index,
+                len(self.config.arm.call_sequence),
+                call.call_id,
+                pose.angles,
+            )
+            await self.arm.move_to_pose(pose.angles)
+            current_task = asyncio.current_task()
+            if current_task is not None and current_task.cancelling():
+                raise asyncio.CancelledError
+            if pose.hold_s > 0:
+                await asyncio.sleep(pose.hold_s)
+
+        logger.info("Call action complete for call %s; returning all joints home", call.call_id)
+        await self.arm.home_all()
+
+    def _on_call_sequence_done(self, call_id: str, task: asyncio.Task[None]) -> None:
+        self._call_action_tasks.pop(call_id, None)
+        if task.cancelled():
+            logger.warning("Call action cancelled for call %s", call_id)
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Call action failed for call %s",
+                call_id,
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def handle_dtmf(self, call: SIPCall, digit: str, source: str) -> None:
         """Translate a DTMF digit into an I2C servo motion and audio feedback cue."""
         key = digit.upper()
         logger.info("DTMF %r (%s) on call %s", key, source, call.call_id)
+
+        action_task = self._call_action_tasks.get(call.call_id)
+        if action_task is not None and not action_task.done():
+            call.rtp_session.enqueue_audio(error_beep())
+            logger.info("Ignoring DTMF %r while automatic call action is running", key)
+            return
 
         if key == "5":
             self.arm.schedule_home_all()

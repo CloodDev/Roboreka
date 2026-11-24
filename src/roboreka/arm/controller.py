@@ -150,6 +150,20 @@ class RobotArm:
         self._tasks[joint_name] = task
         return clamped, hit_limit
 
+    def schedule_move_to(
+        self,
+        joint_name: str,
+        target_angle: float,
+        speed_deg_per_sec: float | None = None,
+    ) -> tuple[float, bool]:
+        """Schedule a smooth move to an absolute joint angle."""
+        self._get_joint(joint_name)
+        clamped, hit_limit, generation = self._prepare_target(joint_name, target_angle)
+        self._tasks[joint_name] = asyncio.create_task(
+            self._ramp_to(joint_name, clamped, hit_limit, generation, speed_deg_per_sec)
+        )
+        return clamped, hit_limit
+
     def schedule_home_all(self) -> None:
         """Schedule smooth homing on all joints in the background."""
         for name, joint in self.joints.items():
@@ -163,6 +177,11 @@ class RobotArm:
         await asyncio.gather(
             *(self.move_to(name, joint.home_angle) for name, joint in self.joints.items())
         )
+        return self.get_state()
+
+    async def move_to_pose(self, angles: dict[str, float]) -> dict[str, float]:
+        """Smoothly move the configured joints in a pose concurrently."""
+        await asyncio.gather(*(self.move_to(name, angle) for name, angle in angles.items()))
         return self.get_state()
 
     def stop(self) -> None:

@@ -22,9 +22,21 @@ mock = false
 home_on_start = true
 speed_deg_per_sec = 90.0
 release_on_shutdown = true
+# Optional automatic action performed for each answered call.
+# Poses run in order, then every joint returns to its home_angle.
+# Each pose may set any subset of joints; omitted joints hold their position.
+# Add entries below using your arm's safe, calibrated angles.
+# [[arm.call_sequence]]
+# angles = { base = 105.0, shoulder = 90.0 }
+# hold_s = 0.5
+#
+# [[arm.call_sequence]]
+# angles = { base = 90.0, shoulder = 105.0 }
+# hold_s = 0.5
 
 [[arm.joints]]
 name = "base"
+# PCA9685 servo output channel (0-15, unique for each joint)
 channel = 0
 min_angle = 0.0
 max_angle = 180.0
@@ -36,6 +48,7 @@ inverted = false
 
 [[arm.joints]]
 name = "shoulder"
+# PCA9685 servo output channel (0-15, unique for each joint)
 channel = 1
 min_angle = 15.0
 max_angle = 165.0
@@ -47,6 +60,7 @@ inverted = false
 
 [[arm.joints]]
 name = "elbow"
+# PCA9685 servo output channel (0-15, unique for each joint)
 channel = 2
 min_angle = 15.0
 max_angle = 165.0
@@ -58,6 +72,7 @@ inverted = false
 
 [[arm.joints]]
 name = "gripper"
+# PCA9685 servo output channel (0-15, unique for each joint)
 channel = 3
 min_angle = 10.0
 max_angle = 120.0
